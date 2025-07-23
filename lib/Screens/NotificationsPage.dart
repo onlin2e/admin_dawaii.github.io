@@ -81,52 +81,52 @@ class _NotificationsPageState extends State<NotificationsPage>
     }
   }
 
-  Future<Map<String, double>> calculateWeeklyPerformance() async {
-    Map<String, double> patientPerformance = {};
-    DateTime today = DateTime.now();
-    // Calculate start of week correctly (7 days ago, excluding today)
-    DateTime startOfWeek = today.subtract(const Duration(days: 7));
 
-    try {
-      for (var patient in patients) {
-        String patientId = patient['id'];
-        double totalDays = 0;
-        double totalPercentage = 0;
-        bool hasPerformanceData = false;
+Future<Map<String, double>> calculateWeeklyPerformance() async {
+  Map<String, double> patientPerformance = {};
+  DateTime today = DateTime.now();
+  // Calculate start of week correctly (7 days ago, excluding today)
+  DateTime startOfWeek = today.subtract(const Duration(days: 7));
 
-        // Fetch daily performances for the specific patient.
-        final dailyPerformancesSnapshot = await FirebaseFirestore.instance
-            .collection('ActivePatient')
-            .doc(patientId)
-            .collection('DailyPerformances')
-            .where('date', isGreaterThanOrEqualTo: startOfWeek)
-            .where('date', isLessThan: today)
-            .get();
+  try {
+    for (var patient in patients) {
+      String patientId = patient['id'];
+      double totalDays = 0;
+      double totalPercentage = 0;
+      bool hasPerformanceData = false;
 
-        for (var doc in dailyPerformancesSnapshot.docs) {
-          hasPerformanceData = true;
-          totalDays++;
-          // Convert the decimal value to a percentage.
-          double dailyPercentage = (doc['dailyPercentage'] ?? 0.0) *
-              100; // Ensure null safety and convert to percentage.
-          totalPercentage += dailyPercentage;
-        }
+      // Fetch daily performances for the specific patient.
+      final dailyPerformancesSnapshot = await FirebaseFirestore.instance
+          .collection('ActivePatient')
+          .doc(patientId)
+          .collection('DailyPerformances')
+          .where('date', isGreaterThanOrEqualTo: startOfWeek)
+          .where('date', isLessThan: today)
+          .get();
 
-        double weeklyPercentage =
-            totalDays > 0 ? totalPercentage / totalDays : 0.0;
-        if (hasPerformanceData) {
-          patientPerformance[patientId] = weeklyPercentage;
-        }
+      for (var doc in dailyPerformancesSnapshot.docs) {
+        hasPerformanceData = true;
+        totalDays++;
+        // تم إلغاء التحويل إلى نسبة مئوية هنا، لأنها تُحفظ بالفعل كنسبة مئوية صحيحة.
+        double dailyPercentage = (doc['dailyPercentage'] ?? 0.0).toDouble(); // <--- التعديل هنا!
+        totalPercentage += dailyPercentage;
       }
-      return patientPerformance;
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Error fetching performance data: $e';
-        _isLoading = false;
-      });
-      return {};
+
+      double weeklyPercentage =
+          totalDays > 0 ? totalPercentage / totalDays : 0.0;
+      if (hasPerformanceData) {
+        patientPerformance[patientId] = weeklyPercentage;
+      }
     }
+    return patientPerformance;
+  } catch (e) {
+    setState(() {
+      _errorMessage = 'Error fetching performance data: $e';
+      _isLoading = false;
+    });
+    return {};
   }
+}
 
   // دالة لتقسيم المرضى بناءً على الأداء
   Future<void> categorizePatients() async {
@@ -168,9 +168,9 @@ class _NotificationsPageState extends State<NotificationsPage>
         String patientId = patient['id'];
         double? patientPerformancePercentage = performance[patientId];
         if (patientPerformancePercentage != null) {
-          if (patientPerformancePercentage >= 75) {
+          if (patientPerformancePercentage >= 80) {
             selectedPatientsExcellent.add(patientId);
-          } else if (patientPerformancePercentage >= 40) {
+          } else if (patientPerformancePercentage >= 60) {
             selectedPatientsModerate.add(patientId);
           } else {
             selectedPatientsPoor.add(patientId);

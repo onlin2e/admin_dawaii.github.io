@@ -5,12 +5,15 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'package:dropdown_search/dropdown_search.dart';
+import 'package:med_ad_admin/Screens/excel_exporter.dart';
+
 
 
 class PatientProfile extends StatefulWidget {
   final String patientId;
   final String patientName;
   final String patientPhone;
+  // final String s;
 
   const PatientProfile({
     super.key,
@@ -29,15 +32,14 @@ class _PatientProfileState extends State<PatientProfile> {
     final Uuid uuid = Uuid();
     DateTime _selectedMonth = DateTime.now();
   // late Stream<QuerySnapshot> _medicineIntakeStream;
-          late Stream<List<Map<String, dynamic>>> _medicineIntakeStream;
+          // late Stream<List<Map<String, dynamic>>> _medicineIntakeStream;
 
 
   ///////
     @override
   void initState() {
     super.initState();
-    // _fetchMedicineIntakeForMonth(_selectedMonth);
-         _medicineIntakeStream = _fetchMedicineIntakeForMonth(_selectedMonth);
+    
 
   }
 
@@ -55,6 +57,38 @@ class _PatientProfileState extends State<PatientProfile> {
       return Icon(Icons.cancel, color: Colors.red, size: 24);
     }
   }
+ Stream<List<Map<String, dynamic>>> _fetchDailyPerformanceLogs() {
+  print("Attempting to fetch daily performance logs for patient ID: ${widget.patientId}");
+  return _firestore
+      .collection('ActivePatient')
+      .doc(widget.patientId)
+      .collection('DailyPerformances') // <--- هنا التعديل! غيّرها من 'dailyPerformance' إلى 'dailyPerformances'
+      .orderBy('date', descending: false)
+      .snapshots()
+      .map((snapshot) {
+    print("Fetched ${snapshot.docs.length} daily performance documents.");
+    if (snapshot.docs.isNotEmpty) {
+      print("First daily performance document data: ${snapshot.docs.first.data()}");
+    }
+    return snapshot.docs.map((doc) => doc.data()).toList();
+  });
+}
+
+
+double _calculateOverallAdherenceFromDailyPerformance(
+    List<Map<String, dynamic>> dailyPerformanceLogs) {
+  if (dailyPerformanceLogs.isEmpty) {
+    return 0.0;
+  }
+
+  double totalDailyPercentages = 0.0;
+  for (var log in dailyPerformanceLogs) {
+    if (log.containsKey('dailyPercentage') && log['dailyPercentage'] is num) {
+      totalDailyPercentages += (log['dailyPercentage'] as num).toDouble();
+    }
+  }
+  return totalDailyPercentages / dailyPerformanceLogs.length; // Returns average
+}
  // دالة لجلب بيانات تتبع الأدوية لشهر محدد
   Stream<List<Map<String, dynamic>>> _fetchMedicineIntakeForMonth(DateTime month) async* {
   DateTime firstDayOfMonth = DateTime(month.year, month.month, 1);
@@ -113,8 +147,6 @@ void _nextMonth() {
 }
 
 
-/// Calculates adherence percentage by grouping logs by day and checking if all scheduled medicines were taken for that day.
-  /// Days with no scheduled medicines or no data are not counted towards the total days for percentage calculation.
   double calculateAdherence(List<Map<String, dynamic>> intakeLogs) {
     if (intakeLogs.isEmpty) return 0.0;
 
@@ -146,13 +178,6 @@ void _nextMonth() {
     return totalDaysWithScheduledMedicines > 0 ? (adherentDays / totalDaysWithScheduledMedicines) : 0.0;
   }
 
-  
-
-
-/// Calculates adherence only based on days that had scheduled doses.
-/// Days without any scheduled medications are ignored completely.
-/// Calculates adherence only based on days that had scheduled doses.
-/// Days without any scheduled medications are ignored completely.
 double calculateAdherenceBasedOnScheduledDays(List<Map<String, dynamic>> intakeLogs) {
   if (intakeLogs.isEmpty) return 0.0;
 
@@ -176,34 +201,8 @@ double calculateAdherenceBasedOnScheduledDays(List<Map<String, dynamic>> intakeL
     if (allTaken) fullAdherenceDays++;
   });
 
-  // هذا هو السطر الذي ستقوم بتعديله
-  return totalScheduledDays == 0 ? 0.0 : (fullAdherenceDays / totalScheduledDays) * 100;
+  return totalScheduledDays == 0 ? 0.0 : fullAdherenceDays / totalScheduledDays;
 }
-// double calculateAdherenceBasedOnScheduledDays(List<Map<String, dynamic>> intakeLogs) {
-//   if (intakeLogs.isEmpty) return 0.0;
-
-//   // Filter valid logs with scheduled times
-//   final validLogs = intakeLogs.where((log) => log['scheduledTime'] != null).toList();
-
-//   // Group logs by date
-//   final Map<DateTime, List<Map<String, dynamic>>> groupedByDay = {};
-
-//   for (var log in validLogs) {
-//     final scheduled = log['scheduledTime'];
-//     final dateKey = DateTime(scheduled.year, scheduled.month, scheduled.day);
-//     groupedByDay.putIfAbsent(dateKey, () => []).add(log);
-//   }
-
-//   int totalScheduledDays = groupedByDay.length;
-//   int fullAdherenceDays = 0;
-
-//   groupedByDay.forEach((day, logs) {
-//     final allTaken = logs.every((log) => log['taken'] == true);
-//     if (allTaken) fullAdherenceDays++;
-//   });
-
-//   return totalScheduledDays == 0 ? 0.0 : fullAdherenceDays / totalScheduledDays;
-// }
 
   /// Gets the start date of the medicine regimen from the earliest scheduled intake log.
   DateTime? getStartDate(List<Map<String, dynamic>> intakeLogs) {
@@ -211,8 +210,7 @@ double calculateAdherenceBasedOnScheduledDays(List<Map<String, dynamic>> intakeL
     return intakeLogs.first['scheduledTime']; // Logs are already sorted by scheduledTime
   }
 
-  /// Calculates the number of days elapsed since the start date of the medicine regimen.
-  /// This counts all days since the start, regardless of daily adherence or data availability.
+
   int getAdherenceDays(DateTime? startDate) {
     if (startDate == null) return 0;
     // Normalize dates to just the day part to avoid time differences
@@ -223,41 +221,6 @@ double calculateAdherenceBasedOnScheduledDays(List<Map<String, dynamic>> intakeL
     // Calculate the difference in days
     return startOfDayToday.difference(startOfDayStartDate).inDays + 1; // +1 to include the start day
   }
-Stream<List<Map<String, dynamic>>> _fetchAllMedicineIntakeLogs() async* {
-  final patientMedicineSnapshot = await _firestore
-      .collection('ActivePatient')
-      .doc(widget.patientId)
-      .collection('PatientMedicine')
-      .get();
-
-  List<Map<String, dynamic>> allIntakeLogs = [];
-
-  for (final medicineDoc in patientMedicineSnapshot.docs) {
-    final intakeSnapshot = await _firestore
-        .collection('ActivePatient')
-        .doc(widget.patientId)
-        .collection('PatientMedicine')
-        .doc(medicineDoc.id)
-        .collection('MedicineIntakeLogs')
-        .orderBy('scheduledTime', descending: false)
-        .get();
-
-    for (final intakeDoc in intakeSnapshot.docs) {
-      final intakeData = intakeDoc.data() as Map<String, dynamic>;
-      allIntakeLogs.add({
-        'medicineName': medicineDoc['MedicineName'] ?? 'N/A',
-        'scheduledTime': (intakeData['scheduledTime'] as Timestamp).toDate().toLocal(),
-        'taken': intakeData['taken'] ?? false,
-        'takenAt': intakeData['takenAt'] != null
-            ? (intakeData['takenAt'] as Timestamp).toDate().toLocal()
-            : null,
-      });
-    }
-  }
-
-  allIntakeLogs.sort((a, b) => a['scheduledTime'].compareTo(b['scheduledTime']));
-  yield allIntakeLogs;
-}
 
 
 int getAdherenceDaysFromLogs(List<Map<String, dynamic>> intakeLogs) {
@@ -273,6 +236,43 @@ int getAdherenceDaysFromLogs(List<Map<String, dynamic>> intakeLogs) {
 
   return uniqueDays.length;
 }
+
+
+Future<void> _downloadIntakeLogsAsExcel() async {
+    try {
+      // 1. جلب بيانات تناول الأدوية للشهر المحدد
+      // نستخدم .first للحصول على القيمة الأولى من Stream
+      final List<Map<String, dynamic>> intakeLogs =
+          await _fetchMedicineIntakeForMonth(_selectedMonth).first;
+
+      // 2. التحقق مما إذا كانت هناك أي بيانات
+      if (intakeLogs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('لا توجد بيانات تناول دواء لتنزيلها لهذا الشهر.')),
+        );
+        return; // الخروج من الدالة إذا لم يكن هناك بيانات
+      }
+
+      // 3. استدعاء الدالة المساعدة لتصدير البيانات إلى Excel
+      // هنا نمرر البيانات اللازمة للدالة الخارجية
+      await exportMedicineIntakeToExcel(
+        intakeLogs: intakeLogs,
+        patientName: widget.patientName, // اسم المريض من الـ widget الحالي
+        selectedMonth: _selectedMonth,   // الشهر المحدد حاليًا
+      );
+
+      // 4. عرض رسالة نجاح للمستخدم
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تم حفظ بيانات تناول الأدوية بنجاح.')),
+      );
+    } catch (e) {
+      // 5. التعامل مع أي أخطاء وعرض رسالة فشل
+      print("خطأ في تنزيل Excel من الواجهة الأمامية: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('فشل في تنزيل ملف Excel: $e')),
+      );
+    }
+  }
 
   ///////////////////////////////////////////////////////////////////////////////////
   
@@ -336,7 +336,6 @@ int getAdherenceDaysFromLogs(List<Map<String, dynamic>> intakeLogs) {
                       List<String> medicineNames = snapshot.data!.docs.map((doc) => doc['name'].toString()).toList();
                  return   DropdownSearch<String>( // <--- تم التغيير هنا من .multiSelection إلى عادي
   items: medicineNames,
-  // بدلاً من selectedItems، نستخدم selectedItem للاختيار الفردي
   selectedItem: selectedMedicineName, // <--- تغيير من selectedItems
   popupProps: PopupProps.menu( // <--- تم التغيير هنا من PopupPropsMultiSelection إلى PopupProps
     showSearchBox: true,
@@ -658,14 +657,7 @@ Future<void> _deleteTime(BuildContext context, int indexToDelete, StateSetter di
 }
 
 
-  // // تم تعديل هذه الدالة لإضافة جدول الدواء فقط
-  // Future<void> scheduleMedicineReminders(String patientId, Map<String, dynamic> medicineData) async {
-  //   // لا نقوم الآن بإرسال تذكيرات فورية من هنا
-  //   print("Medicine scheduled for patient: $patientId, Medicine: ${medicineData['MedicineName']}");
-  // }
 
-
-/// حذف دواء
 void deleteMedicine(String medicineId) {
 showDialog(
 context: context,
@@ -697,8 +689,7 @@ child: Text("Delete"),
 
 
  Widget build(BuildContext context) {
-   DateTime firstDayOfMonth = DateTime(_selectedMonth.year, _selectedMonth.month, 1);
-    DateTime lastDayOfMonth = DateTime(_selectedMonth.year, _selectedMonth.month + 1, 0);
+
     return Scaffold(
       appBar: AppBar(title: Text("Patient Profile")),
       body: Padding(
@@ -805,21 +796,102 @@ Container(
     ],
   ),
   child: StreamBuilder<List<Map<String, dynamic>>>(
-    stream: _fetchAllMedicineIntakeLogs(),
+    // هنا نستخدم الدالة الجديدة لجلب بيانات الأداء اليومي
+    stream: _fetchDailyPerformanceLogs(),
     builder: (context, snapshot) {
       if (snapshot.connectionState == ConnectionState.waiting) {
         return const Center(child: CircularProgressIndicator());
       } else if (snapshot.hasError) {
+        // طباعة الخطأ للمساعدة في التصحيح
+        print("Error in Daily Performance Stream: ${snapshot.error}");
         return Center(child: Text("Error: ${snapshot.error}"));
-      } else if (!snapshot.hasData) {
-        return const Center(
-            child: Text("No medicine intake data available."));
+      } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+        // حالة عدم وجود بيانات أداء يومي: نعرض قيمًا افتراضية
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Adherence Rate",
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue[800]),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text(
+                  "0.0%", // قيمة افتراضية للنسبة
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 120,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(6),
+                    color: Colors.grey[300],
+                  ),
+                  child: FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: 0.0, // نسبة 0%
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(6),
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              "Adherence Days: 0", // قيمة افتراضية للأيام
+              style: TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "Start Date: N/A", // قيمة افتراضية للتاريخ
+              style: TextStyle(fontSize: 16),
+            ),
+          ],
+        );
       } else {
-        final intakeLogs = snapshot.data!;
-final adherencePercentage = calculateAdherenceBasedOnScheduledDays(intakeLogs);
-        final startDate = getStartDate(intakeLogs);
-final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
+        // إذا كان هناك بيانات، نبدأ الحسابات
+        final dailyPerformanceLogs = snapshot.data!;
 
+        // حساب النسبة المئوية الكلية للالتزام
+        final overallAdherencePercentage =
+            _calculateOverallAdherenceFromDailyPerformance(dailyPerformanceLogs);
+
+        DateTime? startDate;
+        int adherenceDays = 0;
+
+        if (dailyPerformanceLogs.isNotEmpty) {
+          // جلب تاريخ البدء من أول سجل (لأنه تم ترتيبه في الدالة)
+          // وتحويله من String "yyyy-MM-ddTHH:mm:ss.SSS" إلى DateTime
+          try {
+            startDate = DateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS").parse(dailyPerformanceLogs.first['date']);
+            // التأكد من أن startDate هو بداية اليوم فقط (تجاهل الوقت)
+            startDate = DateTime(startDate.year, startDate.month, startDate.day);
+          } catch (e) {
+            print("Error parsing start date from dailyPerformance: $e");
+            startDate = null; // في حالة فشل التحويل
+          }
+
+          // حساب عدد الأيام الفريدة التي تم تسجيل أداء لها
+          final uniqueRecordedDays = <String>{};
+          for (var log in dailyPerformanceLogs) {
+            if (log.containsKey('date') && log['date'] is String) {
+              // إضافة جزء التاريخ فقط (YYYY-MM-DD) لضمان عد الأيام الفريدة
+              uniqueRecordedDays.add((log['date'] as String).split('T').first);
+            }
+          }
+          adherenceDays = uniqueRecordedDays.length;
+        }
+
+       // عرض النتائج في الواجهة
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -834,11 +906,11 @@ final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
             Row(
               children: [
                 Text(
-                    "${(adherencePercentage * 100).toStringAsFixed(1)}%",
+                    // عرض النسبة مع تنسيق عشري واحد
+                    "${overallAdherencePercentage.toStringAsFixed(1)}%",
                     style: const TextStyle(
                         fontSize: 24, fontWeight: FontWeight.bold)),
                 const SizedBox(width: 12),
-                // مؤشر شريطي مخصص
                 Container(
                   width: 120,
                   height: 12,
@@ -848,7 +920,8 @@ final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
                   ),
                   child: FractionallySizedBox(
                     alignment: Alignment.centerLeft,
-                    widthFactor: adherencePercentage,
+                    // النسبة بين 0-100، widthFactor يتوقع قيمة بين 0.0 و 1.0
+                    widthFactor: overallAdherencePercentage / 100,
                     child: Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(6),
@@ -861,13 +934,13 @@ final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
             ),
             const SizedBox(height: 12),
             Text(
-              "Adherence Days: $adherenceDays",
+              "Adherence Days: $adherenceDays", // عرض عدد أيام الالتزام
               style: const TextStyle(fontSize: 16),
             ),
             const SizedBox(height: 8),
             Text(
               startDate != null
-                  ? "Start Date: ${DateFormat('yyyy-MM-dd').format(startDate)}"
+                  ? "Start Date: ${DateFormat('yyyy-MM-dd').format(startDate)}" // عرض تاريخ البدء المنسق
                   : "Start Date: N/A",
               style: const TextStyle(fontSize: 16),
             ),
@@ -877,10 +950,24 @@ final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
     },
   ),
 ),
+          SizedBox(height: 20),
 
-                Text("Commitment Tracking !!!!!!!!!!!!!!!",
+                Text("Commitment Tracking",
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.indigo)),
                 SizedBox(height: 10),
+                 SizedBox(height: 10),
+          // --- ابدأ بإضافة الزر هنا ---
+          ElevatedButton.icon(
+            onPressed: _downloadIntakeLogsAsExcel, // هذا هو الاستدعاء لدالتنا
+            icon: Icon(Icons.download),
+            label: Text("Download Tracking as Excel"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal, // لون جميل للزر
+              foregroundColor: Colors.white, // لون النص والأيقونة
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+          ),
+          SizedBox(height: 20),
                 Container(
                   padding: EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -960,6 +1047,7 @@ final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
                                             style: TextStyle(
                                                 fontSize: 12, color: Colors.grey[600]),
                                           ),
+                                          
                                         ],
                                       ),
                                     ),
@@ -975,6 +1063,7 @@ final adherenceDays = getAdherenceDaysFromLogs(intakeLogs); // هذا الصح
                           );
                         },
                       ),
+                     
                     ],
                   ),
                 ),

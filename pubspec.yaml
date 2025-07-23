@@ -85,6 +85,8 @@ flutter:
     # - assets/med-ad-firebase-adminsdk-fbsvc-8f97f54b29.json
     - assets/app_icon.ico
     - assets/appstore.png
+    - assets/1.png
+
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

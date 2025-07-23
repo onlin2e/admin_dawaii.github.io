@@ -21,6 +21,10 @@ class _MedicinesPageState extends State<MedicinesPage> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
 
+  // تعريف رابط الصورة الافتراضية الثابتة.
+  // **مهم:** استبدل هذا بالرابط الفعلي لصورة 'appstore.png' بعد رفعها إلى Firebase Storage.
+  static const String DEFAULT_APPSTORE_IMAGE_URL = 'https://firebasestorage.googleapis.com/v0/b/med-ad.firebasestorage.app/o/medIMG%2F1.png?alt=media&token=05b69642-1304-4352-bb92-4123c6e90122'; // <--- هنا التعديل الأول
+
   Future<void> _getImage() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.image,
@@ -47,7 +51,10 @@ class _MedicinesPageState extends State<MedicinesPage> {
       return null;
     } finally {
       setState(() {
-        _image = null;
+        // بعد الرفع، قم بمسح الصورة المحلية المنتقاة
+        // هذا السطر يمكن أن يسبب مشكلة إذا كنت تريد استخدام الصورة بعد الرفع مباشرة لعرضها
+        // ولكن بما أننا نستخدم imageUrl من Firestore، فهو لا يمثل مشكلة
+        _image = null; 
       });
     }
   }
@@ -58,23 +65,29 @@ class _MedicinesPageState extends State<MedicinesPage> {
         _isLoading = true;
       });
 
-      String? imageUrl = await _uploadImage();
+      String? imageUrl;
+      if (_image != null) { // إذا اختار المستخدم صورة، قم برفعها
+        imageUrl = await _uploadImage();
+      } else { // إذا لم يختار المستخدم صورة، استخدم الصورة الافتراضية
+        imageUrl = DEFAULT_APPSTORE_IMAGE_URL; // <--- هنا التعديل الثاني
+      }
 
       await _firestore.collection('medicines').add({
         'name': nameController.text,
-        'imageUrl': imageUrl ?? '',
+        'imageUrl': imageUrl ?? '', // تأكد من وجود رابط، وإلا اجعله فارغًا (مع أن الافتراضي سيضمن وجوده)
       });
 
       nameController.clear();
       setState(() {
         _imageUrlPreview = null;
         _isLoading = false;
+        _image = null; // تأكد من مسح الصورة بعد الإضافة
       });
       Navigator.of(context).pop();
     }
   }
 
- Future<void> deleteMedicine(String id, BuildContext context) async {
+  Future<void> deleteMedicine(String id, BuildContext context) async {
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -99,30 +112,46 @@ class _MedicinesPageState extends State<MedicinesPage> {
     );
   }
 
-
   Future<void> editMedicine(String id) async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
 
-      String? imageUrl = await _uploadImage();
+      String? imageUrl;
+      if (_image != null) { // إذا اختار المستخدم صورة جديدة للتحرير، قم برفعها
+        imageUrl = await _uploadImage();
+      } else { // إذا لم يختار المستخدم صورة جديدة، استخدم الرابط الحالي أو الافتراضي
+        // هنا يجب أن نحافظ على الصورة الموجودة مسبقًا إذا لم يتم اختيار صورة جديدة
+        // أو نستخدم الافتراضية إذا لم تكن هناك صورة أصلية
+        // سنفترض أنك تريد حفظ الصورة الموجودة مسبقًا إذا لم يتم تحميل صورة جديدة، 
+        // أو تعيين الافتراضية إذا كانت فارغة في الأصل
+        
+        // لجلب الصورة الحالية من Firestore (للتأكد فقط):
+        final currentMedicineDoc = await _firestore.collection('medicines').doc(id).get();
+        final currentImageUrl = currentMedicineDoc.data()?['imageUrl'] as String?;
+
+        imageUrl = currentImageUrl; // حافظ على الصورة الموجودة
+        if (imageUrl == null || imageUrl.isEmpty) { // إذا لم تكن هناك صورة حالية، استخدم الافتراضية
+          imageUrl = DEFAULT_APPSTORE_IMAGE_URL; // <--- هنا التعديل الثالث
+        }
+      }
 
       await _firestore.collection('medicines').doc(id).update({
         'name': nameController.text,
         'imageUrl': imageUrl ?? '',
       });
- 
+      
       nameController.clear();
       setState(() {
         _imageUrlPreview = null;
         _isLoading = false;
+        _image = null; // تأكد من مسح الصورة بعد التعديل
       });
+      Navigator.of(context).pop(); // إغلاق نافذة التعديل بعد الحفظ
     }
   }
 
-  
-  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -152,6 +181,9 @@ class _MedicinesPageState extends State<MedicinesPage> {
                 const SizedBox(width: 10),
                 ElevatedButton.icon(
                   onPressed: () {
+                    // قم بمسح الصورة والاسم عند فتح إضافة دواء جديد
+                    nameController.clear();
+                    _image = null;
                     showDialog(
                       context: context,
                       builder: (context) {
@@ -177,6 +209,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                           setDialogState(() {});
                                         },
                                       ),
+                                      const SizedBox(height: 10), // مسافة بسيطة
                                       ElevatedButton(
                                         onPressed: () async {
                                           await _getImage();
@@ -234,14 +267,14 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                   onPressed: _isLoading
                                       ? null
                                       : () async {
-                                          setButtonState(() {
-                                            _isLoading = true;
-                                          });
-                                          await addMedicine(context);
-                                          setButtonState(() {
-                                            _isLoading = false;
-                                          });
-                                        },
+                                            setButtonState(() {
+                                              _isLoading = true;
+                                            });
+                                            await addMedicine(context);
+                                            setButtonState(() {
+                                              _isLoading = false;
+                                            });
+                                          },
                                   child: _isLoading
                                       ? const CircularProgressIndicator()
                                       : const Text('Add'),
@@ -289,9 +322,10 @@ class _MedicinesPageState extends State<MedicinesPage> {
                         margin: const EdgeInsets.symmetric(vertical: 8),
                         child: Column(
                           children: [
-                            medicineData['imageUrl'] != ''
+                            // عرض الصورة الافتراضية إذا كان imageUrl فارغًا
+                            medicineData['imageUrl'] != null && medicineData['imageUrl'].isNotEmpty
                                 ? Image.network(medicineData['imageUrl'], width: double.infinity, height: 200, fit: BoxFit.contain)
-                                : const Icon(Icons.image, size: 150),
+                                : Image.asset('assets/1.png', width: double.infinity, height: 200, fit: BoxFit.contain), // <--- هنا التعديل الرابع في العرض
                             ListTile(
                               title: Text(medicineData['name'], textAlign: TextAlign.center),
                               trailing: Row(
@@ -301,6 +335,9 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                     icon: const Icon(Icons.edit, color: Colors.blue),
                                     onPressed: () {
                                       nameController.text = medicineData['name'];
+                                      // إذا كانت هناك صورة محفوظة، قم بعرضها في المعاينة
+                                      _imageUrlPreview = medicineData['imageUrl']; 
+                                      _image = null; // تأكد من مسح أي صورة مختارة سابقًا قبل التحرير
                                       showDialog(
                                         context: context,
                                         builder: (context) {
@@ -326,13 +363,17 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                                             setDialogState(() {});
                                                           },
                                                         ),
+                                                        const SizedBox(height: 10),
                                                         ElevatedButton(
                                                           onPressed: () async {
                                                             await _getImage();
-                                                            setDialogState(() {});
+                                                            setDialogState(() {
+                                                              _imageUrlPreview = null; // مسح معاينة الرابط عند اختيار صورة جديدة
+                                                            });
                                                           },
-                                                          child: const Text('Pick Image'),
+                                                          child: const Text('Pick New Image'),
                                                         ),
+                                                        // عرض الصورة المختارة الجديدة أو الصورة القديمة
                                                         if (_image != null)
                                                           Column(
                                                             children: [
@@ -356,6 +397,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                                                             onPressed: () {
                                                                               setDialogState(() {
                                                                                 _image = null;
+                                                                                _imageUrlPreview = null; // مسح الرابط والمعاينة
                                                                               });
                                                                               Navigator.of(context).pop();
                                                                             },
@@ -369,7 +411,46 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                                                 child: const Text('Remove Image'),
                                                               ),
                                                             ],
-                                                          ),
+                                                          )
+                                                        else if (_imageUrlPreview != null && _imageUrlPreview!.isNotEmpty)
+                                                          Column(
+                                                            children: [
+                                                              Image.network(_imageUrlPreview!, height: 100),
+                                                              TextButton(
+                                                                onPressed: () {
+                                                                  showDialog(
+                                                                    context: context,
+                                                                    builder: (BuildContext context) {
+                                                                      return AlertDialog(
+                                                                        title: const Text('Confirm'),
+                                                                        content: const Text('Are you sure you want to remove this image?'),
+                                                                        actions: <Widget>[
+                                                                          TextButton(
+                                                                            onPressed: () {
+                                                                              Navigator.of(context).pop();
+                                                                            },
+                                                                            child: const Text('Cancel'),
+                                                                          ),
+                                                                          TextButton(
+                                                                            onPressed: () {
+                                                                              setDialogState(() {
+                                                                                _imageUrlPreview = null; // مسح الرابط والمعاينة
+                                                                              });
+                                                                              Navigator.of(context).pop();
+                                                                            },
+                                                                            child: const Text('Remove'),
+                                                                          ),
+                                                                        ],
+                                                                      );
+                                                                    },
+                                                                  );
+                                                                },
+                                                                child: const Text('Remove Image'),
+                                                              ),
+                                                            ],
+                                                          )
+                                                        else // إذا لم تكن هناك صورة جديدة ولا معاينة رابط، اعرض الصورة الافتراضية
+                                                          Image.asset('assets/1.png', height: 100), // <--- التعديل الخامس (في نافذة التعديل)
                                                       ],
                                                     ),
                                                   ),
@@ -382,11 +463,16 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                                   return TextButton(
                                                     onPressed: _isLoading
                                                         ? null
-                                                        : () {
-                                                            editMedicine(medicine.id);
-                                                            Navigator.of(context).pop();
-                                                            setButtonState(() {});
-                                                          },
+                                                        : () async {
+                                                              setButtonState(() {
+                                                                _isLoading = true;
+                                                              });
+                                                              await editMedicine(medicine.id);
+                                                              setButtonState(() {
+                                                                _isLoading = false;
+                                                              });
+                                                              Navigator.of(context).pop(); // إغلاق نافذة التعديل
+                                                            },
                                                     child: _isLoading
                                                         ? const CircularProgressIndicator()
                                                         : const Text('Save'),
@@ -410,7 +496,7 @@ class _MedicinesPageState extends State<MedicinesPage> {
                                     onPressed: () => deleteMedicine(medicine.id, context),
                                   ),
                                 ],
-                                ),
+                              ),
                             ),
                           ],
                         ),
